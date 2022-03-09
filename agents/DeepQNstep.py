@@ -6,17 +6,10 @@ Created on Mon Jan 20 13:17:09 2020
 @author: mateusz
 """
 
-import torch.nn as nn
-import torch.nn.functional as F
 import random
 import torch
 from collections import namedtuple, deque
-import numpy as np
-from itertools import product
-import copy
-from utils import dictionary_of_actions
 from .DeepQ import DQN
-        
 
 class DQN_Nstep(DQN):
 

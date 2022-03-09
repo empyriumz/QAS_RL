@@ -8,15 +8,11 @@ Created on Mon Jan 20 13:17:09 2020
 """
 
 import torch.nn as nn
-import torch.nn.functional as F
 import random
 import torch
-
 import copy
-from collections import namedtuple, deque
+from collections import namedtuple
 import numpy as np
-from itertools import product
-
 from utils import dictionary_of_actions, dict_of_actions_revert_q
 
 
