@@ -45,8 +45,6 @@ class Saver:
 
 
 def modify_state(s, env):
-    if not conf["agent"]["angles"]:
-        s = s[: -env.num_layers]
     if conf["agent"]["acc_state"]:
         s = torch.cat(
             (

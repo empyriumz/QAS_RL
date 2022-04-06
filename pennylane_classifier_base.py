@@ -18,6 +18,7 @@ device = "cuda:0" if torch.cuda.is_available() else "cpu"
 # define the QNode
 n_qubits = 4
 n_classes = 4
+n_layers = 12
 
 dev = qml.device("default.qubit", wires=n_qubits)
 
@@ -43,9 +44,9 @@ class VQCTorch(nn.Module):
         self.num_layers = num_layers
         self.num_qubits = num_qubits
         self.circuit = circuit
-        self.q_params = nn.Parameter(0.01 * torch.randn(self.num_layers, 1))
-        # self.q_params = nn.Parameter(torch.randn(4, 4))
-
+        self.q_params = nn.Parameter(0.1 * torch.randn(self.num_layers, 1))
+        #self.q_params = nn.Parameter(0.01 * torch.randn(self.num_layers, self.num_qubits, 4))
+     
     def get_angles_atan(self, in_x):
         return torch.stack(
             [torch.stack([torch.atan(item), torch.atan(item ** 2)]) for item in in_x]
@@ -84,8 +85,8 @@ def main():
     # Build the model
     # This version of model does not use batch input
     # batch is handled in the Optimization function
-
-    HybridVQC = VQCTorch()
+    circuit = Qcircuit()
+    HybridVQC = VQCTorch(circuit=circuit, num_layers=n_layers, num_qubits=n_qubits)
     # print(HybridVQC.state_dict())
 
     # opt = torch.optim.RMSprop(HybridVQC.parameters(), lr=0.01, alpha=0.99, eps=1e-08, weight_decay=0, momentum=0, centered=False)

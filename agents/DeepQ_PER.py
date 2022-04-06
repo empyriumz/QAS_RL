@@ -40,10 +40,6 @@ class DQN_PER(DQN):
 
         weights = torch.tensor(weights, device=self.device)
 
-        # if not self.with_angles:
-        #     state_batch = state_batch[:, :-self.num_layers]
-        #     next_state_batch = next_state_batch[:, :-self.num_layers]
-
         state_action_values = self.policy_net.forward(state_batch).gather(1, action_batch.unsqueeze(1))
         """ Double DQN """        
         next_state_values = self.target_net.forward(next_state_batch)

@@ -1,7 +1,6 @@
 import torch
 import sys
 import numpy as np
-import copy
 import curricula
 import pennylane as qml
 
@@ -39,7 +38,7 @@ class CircuitEnv:
         # self.done_threshold = self.config["env"]["accept_err"]
 
         sys.stdout.flush()
-        self.state_size = 5 * self.num_layers  # 2 for CNOT, 3 for rotation
+        self.state_size = 4 * self.num_layers  # 2 for CNOT, 2 for rotation
         self.actual_layer = -1
         self.prev_accuracy = None
         self.accuracy = 0.0
@@ -55,7 +54,9 @@ class CircuitEnv:
         self.data_loader_val = torch.utils.data.DataLoader(
             self.dataset_val, batch_size=self.batch_size, shuffle=False
         )
-
+        sample_x, _ = next(iter(self.data_loader_train))
+        self.test_sample = sample_x[0]
+        
     def step(self, action):
 
         """
@@ -103,7 +104,7 @@ class CircuitEnv:
         #         self.curriculum
         #     )
         print("Accuracy: {:.2f}, Reward: {}".format(self.accuracy, rwd))
-        # print(qml.draw(self.circuit))
+        print(qml.draw(self.circuit)(self.test_sample, self.model.q_params))
         return (
             next_state.view(-1).to(self.device),
             torch.tensor(rwd, dtype=torch.float32, device=self.device),
@@ -152,8 +153,6 @@ class CircuitEnv:
         # return qml.expval(qml.PauliZ(0))
         return [qml.expval(qml.PauliZ(wires=i)) for i in range(self.n_classes)]
 
-    # def variational_classifier(self, features, weights, bias):
-    #     return self.make_circuit(features, weights) + bias
 
     def layer(self, thetas):
         """
@@ -181,22 +180,21 @@ class CircuitEnv:
         self.model = VQCTorch(
             self.circuit, num_layers=self.num_layers, num_qubits=self.num_qubits
         )
-        accuracy = self.train(self.model)
+        accuracy = self.train()
         return accuracy
 
-    def train(self, model):
+    def train(self):
         num_epochs = self.config["classifier"]["num_epochs"]
         learning_rate = self.config["classifier"]["learning_rate"]
 
         loss_fun = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         best_accuracy = 0.0
         for _ in range(num_epochs):
-
             running_acc = 0.0
             for inputs, labels in self.data_loader_train:
                 # inputs = inputs.to(self.device)
-                scores = model.forward(inputs)
+                scores = self.model(inputs)
                 _, preds = torch.max(scores, 1)
                 loss = loss_fun(scores, labels)
 
@@ -207,7 +205,7 @@ class CircuitEnv:
 
             with torch.no_grad():
                 for inputs, labels in self.data_loader_val:
-                    scores = model(inputs)
+                    scores = self.model(inputs)
                     _, preds = torch.max(scores, 1)
                     accuracy = torch.sum(preds == labels).detach().cpu().numpy()
                     running_acc += accuracy

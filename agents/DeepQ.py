@@ -30,7 +30,6 @@ class DQN(object):
         self.update_target_net = conf['agent']['update_target_net']
         neuron_list = conf['agent']['neurons']
         drop_prob = conf['agent']['dropout']
-        self.with_angles = conf['agent']['angles']
         
         if "memory_reset_switch" in conf['agent'].keys():
             self.memory_reset_switch =  conf['agent']["memory_reset_switch"]
@@ -43,7 +42,7 @@ class DQN(object):
 
         self.action_size = action_size
         
-        self.state_size = state_size if self.with_angles else state_size - self.num_layers
+        self.state_size = state_size
         self.state_size = self.state_size + 1 if conf['agent']['acc_state'] else self.state_size
     
           
