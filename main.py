@@ -6,10 +6,13 @@ import argparse
 import pathlib
 import copy
 from utils import get_config
-from environment import CircuitEnv
+
+# from environment import CircuitEnv
+from env_classifier import CircuitEnv
 import agents
 
 torch.set_num_threads(1)
+
 
 class Saver:
     def __init__(self, results_path, experiment_seed):
@@ -22,16 +25,14 @@ class Saver:
             self.stats_file[mode][episode_no] = {
                 "loss": [],
                 "actions": [],
-                "errors": [],
+                "accuracy": [],
                 "done_threshold": 0,
-                "bond_distance": 0,
             }
         elif mode == "test":
             self.stats_file[mode][episode_no] = {
                 "actions": [],
-                "errors": [],
+                "accuracy": [],
                 "done_threshold": 0,
-                "bond_distance": 0,
             }
 
     def save_file(self):
@@ -39,16 +40,21 @@ class Saver:
 
     def validate_stats(self, episode, mode):
         assert len(self.stats_file[mode][episode]["actions"]) == len(
-            self.stats_file[mode][episode]["errors"]
+            self.stats_file[mode][episode]["accuracy"]
         )
 
 
 def modify_state(s, env):
     if not conf["agent"]["angles"]:
         s = s[: -env.num_layers]
-    if conf["agent"]["en_state"]:
+    if conf["agent"]["acc_state"]:
         s = torch.cat(
-            (s, torch.tensor(env.prev_energy, dtype=torch.float, device=device).view(1))
+            (
+                s,
+                torch.tensor(env.prev_accuracy, dtype=torch.float, device=device).view(
+                    1
+                ),
+            )
         )
     return s
 
@@ -69,43 +75,39 @@ def agent_test(env, agent, episode_no, seed, output_path, threshold):
         next_state, reward, done = env.step(agent.translate[action], train_flag=False)
         next_state = modify_state(next_state, env)
         state = next_state.clone()
-        assert type(env.error) == float
-        agent.saver.stats_file["test"][episode_no]["errors"].append(env.error)
+        agent.saver.stats_file["test"][episode_no]["accuracy"].append(env.accuracy)
 
         if done:
-            agent.saver.stats_file["test"][episode_no][
-                "done_threshold"
-            ] = env.done_threshold
-            agent.saver.stats_file["test"][episode_no][
-                "bond_distance"
-            ] = env.current_bond_distance
-            errors_current_bond = [
-                val["errors"][-1]
-                for val in agent.saver.stats_file["test"].values()
-                if val["done_threshold"] == env.done_threshold
-            ]
-            if len(errors_current_bond) > 0 and min(errors_current_bond) > env.error:
-                torch.save(
-                    agent.policy_net.state_dict(),
-                    f"{output_path}/thresh_{threshold}_{seed}_best_geo_{env.current_bond_distance}_model.pth",
-                )
-                torch.save(
-                    agent.optim.state_dict(),
-                    f"{output_path}/thresh_{threshold}_{seed}_best_geo_{env.current_bond_distance}_optim.pth",
-                )
+            # agent.saver.stats_file["test"][episode_no][
+            #     "done_threshold"
+            # ] = env.done_threshold
+            # errors_current_bond = [
+            #     val["errors"][-1]
+            #     for val in agent.saver.stats_file["test"].values()
+            #     if val["done_threshold"] == env.done_threshold
+            # ]
+            # if len(errors_current_bond) > 0 and min(errors_current_bond) > env.error:
+            #     torch.save(
+            #         agent.policy_net.state_dict(),
+            #         f"{output_path}/thresh_{threshold}_{seed}_best_geo_{env.current_bond_distance}_model.pth",
+            #     )
+            #     torch.save(
+            #         agent.optim.state_dict(),
+            #         f"{output_path}/thresh_{threshold}_{seed}_best_geo_{env.current_bond_distance}_optim.pth",
+            #     )
             agent.epsilon = current_epsilon
             agent.saver.validate_stats(episode_no, "test")
             return reward, time
 
 
 def one_episode(episode_no, env, agent, episodes):
-    """ Function preforming full trainig episode."""
+    """ Function preforming full training episode."""
     agent.saver.get_new_episode("train", episode_no)
     state = env.reset()
-    agent.saver.stats_file["train"][episode_no][
-        "bond_distance"
-    ] = env.current_bond_distance
-    agent.saver.stats_file["train"][episode_no]["done_threshold"] = env.done_threshold
+    # agent.saver.stats_file["train"][episode_no][
+    #     "bond_distance"
+    # ] = env.current_bond_distance
+    # agent.saver.stats_file["train"][episode_no]["done_threshold"] = env.done_threshold
 
     assert all(state == env.state.view(-1).to(device)), "Problem with internal state"
     state = modify_state(state, env)
@@ -130,8 +132,7 @@ def one_episode(episode_no, env, agent, episodes):
         )
         state = next_state.clone()
 
-        assert type(env.error) == float
-        agent.saver.stats_file["train"][episode_no]["errors"].append(env.error)
+        agent.saver.stats_file["train"][episode_no]["accuracy"].append(env.accuracy)
 
         if agent.memory_reset_switch:
             if env.error < agent.memory_reset_threshold:

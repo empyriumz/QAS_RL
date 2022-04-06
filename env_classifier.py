@@ -1,0 +1,233 @@
+import torch
+import sys
+import numpy as np
+import copy
+import curricula
+import pennylane as qml
+
+from custom_torch_dataset_class import MakeBlobs
+from pennylane_classifier_base import VQCTorch
+
+
+class CircuitEnv:
+    def __init__(self, conf, device):
+        self.config = conf
+        self.num_qubits = self.config["env"]["num_qubits"]
+        self.num_layers = self.config["env"]["num_layers"]
+        self.n_classes = self.config["env"]["num_classes"]
+        self.n_samples_train = self.config["classifier"]["num_samples_train"]
+        self.n_samples_val = self.config["classifier"]["num_samples_val"]
+        self.min_accuracy = float(self.config["classifier"]["min_accuracy"])
+        self.dev = qml.device("default.qubit", wires=self.num_qubits)
+        # self.circuit = qml.device("default.qubit", wires=self.num_qubits)
+        self.fake_min_accuracy = (
+            self.config["env"]["fake_min_accuracy"]
+            if "fake_min_accuracy" in self.config["env"].keys()
+            else None
+        )
+        self.fn_type = self.config["env"]["fn_type"]
+
+        # If you want to run agent from scratch without *any* curriculum just use the setting with
+        # normal curriculum and set self.config[episodes] = [1000000]
+        # self.curriculum_dict = {}
+
+        # self.curriculum_dict[self.geometry[-3:]] = curricula.__dict__[
+        #     self.config["env"]["curriculum_type"]
+        # ](self.config["env"], target_energy=min_eig)
+
+        self.device = device
+        # self.done_threshold = self.config["env"]["accept_err"]
+
+        sys.stdout.flush()
+        self.state_size = 5 * self.num_layers  # 2 for CNOT, 3 for rotation
+        self.actual_layer = -1
+        self.prev_accuracy = None
+        self.accuracy = 0.0
+        ## n * (n -1) for possible CNOT configurations, n * 3 for possible rotations
+        self.action_size = self.num_qubits * (self.num_qubits + 2)
+
+        self.dataset_train = MakeBlobs(n_samples=self.n_samples_train)
+        self.dataset_val = MakeBlobs(n_samples=self.n_samples_val)
+        self.batch_size = self.config["classifier"]["batch_size"]
+        self.data_loader_train = torch.utils.data.DataLoader(
+            self.dataset_train, batch_size=self.batch_size, shuffle=True
+        )
+        self.data_loader_val = torch.utils.data.DataLoader(
+            self.dataset_val, batch_size=self.batch_size, shuffle=False
+        )
+
+    def step(self, action):
+
+        """
+        Action is performed on the first empty layer.
+        Variable 'actual_layer' points last non-empty layer.
+        """
+        next_state = self.state.clone()
+        self.actual_layer += 1
+
+        """
+        First two elements of the 'action' vector describes position of the CNOT gate.
+        Position of rotation gate and its axis are described by action[2] and action[3].
+        When action[0] == num_qubits, then there is no CNOT gate.
+        When action[2] == num_qubits, then there is no Rotation gate.
+        """
+
+        next_state[0][self.actual_layer] = action[0]
+        next_state[1][self.actual_layer] = (action[0] + action[1]) % self.num_qubits
+
+        ## state[2] corresponds to number of qubit for rotation gate
+        next_state[2][self.actual_layer] = action[2]
+        next_state[3][self.actual_layer] = action[3]
+        # next_state[4][self.actual_layer] = torch.zeros(1)  # the rotation angle
+
+        self.state = next_state.clone()
+        self.accuracy = self.get_accuracy()
+        self.state = next_state.clone()
+
+        # if self.accuracy < self.curriculum.lowest_accuracy and train_flag:
+        #     self.curriculum.lowest_.accuracy = copy.copy(self.accuracy)
+
+        # self.error = float(self.min_accuracy - self.accuracy)
+
+        rwd = self.reward_func(self.accuracy)
+        self.prev_accuracy = np.copy(self.accuracy)
+
+        accuracy_done = int(self.accuracy > self.min_accuracy)
+        layers_done = self.actual_layer == (self.num_layers - 1)
+        done = int(accuracy_done or layers_done)
+
+        # if done:
+        #     self.curriculum.update_threshold(accuracy_done=accuracy_done)
+        #     self.done_threshold = self.curriculum.get_current_threshold()
+        #     self.curriculum_dict[str(self.current_bond_distance)] = copy.deepcopy(
+        #         self.curriculum
+        #     )
+        print("Accuracy: {:.2f}, Reward: {}".format(self.accuracy, rwd))
+        # print(qml.draw(self.circuit))
+        return (
+            next_state.view(-1).to(self.device),
+            torch.tensor(rwd, dtype=torch.float32, device=self.device),
+            done,
+        )
+
+    def reset(self):
+        """
+        Returns empty state of environment.
+        State is a torch Tensor of size (5 x number of layers)
+        1st row [0, num of qubits-1] - denotes qubit with CONTROL gate in each layer
+        2nd row [0, num of qubits-1] - denotes qubit with NOT gate in each layer
+        3rd, 4th & 5th row - rotation qubit, rotation axis, angle
+        !!! When some position in 1st or 3rd row has value 'num_qubits',
+            then this means empty slot, gate does not exist (we do not
+            append it in circuit creator)
+        """
+        ## state_per_layer: (Control_qubit, NOT_qubit, R_qubit, R_axis, R_angle)
+        ## the initialization means no gates applied [num_qubits, 0, num_qubits, 0, 0]
+        controls = self.num_qubits * torch.ones(self.num_layers)
+        nots = torch.zeros(self.num_layers)
+        rotations = self.num_qubits * torch.ones(self.num_layers)
+        generators = torch.zeros(self.num_layers)
+        # angles = torch.zeros(self.num_layers)
+
+        state = torch.stack((controls, nots, rotations, generators))
+        self.state = state
+
+        # self.make_circuit(state)
+        self.actual_layer = -1
+
+        # self.curriculum = copy.deepcopy(
+        #     self.curriculum_dict[str(self.current_bond_distance)]
+        # )
+        # self.done_threshold = copy.deepcopy(self.curriculum.get_current_threshold())
+        self.prev_accuracy = 0.0
+
+        return state.view(-1).to(self.device)
+
+    def make_circuit(self, features, weights):
+        qml.AmplitudeEmbedding(
+            features=features, wires=range(self.num_qubits), pad_with=0, normalize=True
+        )
+        for W in weights:
+            self.layer(thetas=W)
+        # return qml.expval(qml.PauliZ(0))
+        return [qml.expval(qml.PauliZ(wires=i)) for i in range(self.n_classes)]
+
+    # def variational_classifier(self, features, weights, bias):
+    #     return self.make_circuit(features, weights) + bias
+
+    def layer(self, thetas):
+        """
+        based on the angle of first rotation gate we decide if any rotation at
+        a given qubit is present i.e.
+        if thetas[0, i] == 0 then there is no rotation gate on the Control qubit
+        if thetas[1, i] == 0 then there is no rotation gate on the NOT qubit
+        CNOT gate have priority over rotations when both will be present in the given slot
+        """
+        state = self.state.detach().cpu().numpy()
+
+        for i in range(self.num_layers):
+            if state[0][i] != self.num_qubits:
+                qml.CNOT(wires=[int(state[0][i]), int(state[1][i])])
+            elif state[2][i] != self.num_qubits:
+                if int(state[3][i]) == 1:
+                    qml.RX(thetas[0], wires=int(state[2][i]))
+                elif int(state[3][i]) == 2:
+                    qml.RY(thetas[0], wires=int(state[2][i]))
+                elif int(state[3][i]) == 3:
+                    qml.RZ(thetas[0], wires=int(state[2][i]))
+
+    def get_accuracy(self):
+        self.circuit = qml.QNode(self.make_circuit, self.dev, interface="torch")
+        self.model = VQCTorch(
+            self.circuit, num_layers=self.num_layers, num_qubits=self.num_qubits
+        )
+        accuracy = self.train(self.model)
+        return accuracy
+
+    def train(self, model):
+        num_epochs = self.config["classifier"]["num_epochs"]
+        learning_rate = self.config["classifier"]["learning_rate"]
+
+        loss_fun = torch.nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        best_accuracy = 0.0
+        for _ in range(num_epochs):
+
+            running_acc = 0.0
+            for inputs, labels in self.data_loader_train:
+                # inputs = inputs.to(self.device)
+                scores = model.forward(inputs)
+                _, preds = torch.max(scores, 1)
+                loss = loss_fun(scores, labels)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                accuracy = torch.sum(preds == labels).detach().cpu().numpy()
+
+            with torch.no_grad():
+                for inputs, labels in self.data_loader_val:
+                    scores = model(inputs)
+                    _, preds = torch.max(scores, 1)
+                    accuracy = torch.sum(preds == labels).detach().cpu().numpy()
+                    running_acc += accuracy
+
+            accuracy = running_acc / len(self.dataset_val)
+            if accuracy >= best_accuracy:
+                best_accuracy = accuracy
+            if best_accuracy > self.min_accuracy:
+                return best_accuracy
+
+        return best_accuracy
+
+    def reward_func(self, accuracy):
+        max_depth = self.actual_layer == (self.num_layers - 1)
+        if accuracy >= self.min_accuracy:
+            reward = 5.0
+        elif max_depth:
+            reward = -5.0
+        else:
+            reward = np.clip(
+                (self.prev_accuracy - accuracy) / abs(self.prev_accuracy + 1e-6), -1, 1,
+            )
+        return reward

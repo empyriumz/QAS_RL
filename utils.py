@@ -109,12 +109,17 @@ def dictionary_of_actions(num_qubits):
     i = 0
 
     for c, x in product(range(num_qubits), range(1, num_qubits)):
-        dictionary[i] = [c, x, num_qubits, 0]
+        dictionary[i] = [
+            c,
+            x,
+            num_qubits,
+            0,
+        ]  # [..., num_qubits, 0] denotes no rotation
         i += 1
 
     """h  denotes rotation axis. 1, 2, 3 -->  X, Y, Z axes """
     for r, h in product(range(num_qubits), range(1, 4)):
-        dictionary[i] = [num_qubits, 0, r, h]
+        dictionary[i] = [num_qubits, 0, r, h]  # [num_qubits, 0, ...] denotes no CNOT
         i += 1
     return dictionary
 

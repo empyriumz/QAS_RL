@@ -1,6 +1,7 @@
 from qulacs import ParametricQuantumCircuit, QuantumState
 import numpy as np
 
+
 class Parametric_Circuit:
     def __init__(self, n_qubits):
         self.n_qubits = n_qubits

@@ -1,7 +1,7 @@
 import torch
 from qulacs import QuantumCircuit
 from qulacs import gate
-from sys import stdout
+import sys
 import scipy
 import VQE
 import numpy as np
@@ -56,12 +56,12 @@ class CircuitEnv:
         self.ket = QuantumState(self.num_qubits)
         self.done_threshold = conf["env"]["accept_err"]
 
-        stdout.flush()
-        self.state_size = 5 * self.num_layers
+        sys.stdout.flush()
+        self.state_size = 5 * self.num_layers  # 2 for CNOT, 3 for rotation
         self.actual_layer = -1
         self.prev_energy = None
         self.energy = 0
-
+        ## n * (n -1) for possible CNOT configurations, n * 3 for possible rotations
         self.action_size = self.num_qubits * (self.num_qubits + 2)
 
         if "non_local_opt" in conf.keys():
@@ -103,7 +103,7 @@ class CircuitEnv:
         ## state[2] corresponds to number of qubit for rotation gate
         next_state[2][self.actual_layer] = action[2]
         next_state[3][self.actual_layer] = action[3]
-        next_state[4][self.actual_layer] = torch.zeros(1)
+        next_state[4][self.actual_layer] = torch.zeros(1)  # the rotation angle
 
         self.state = next_state.clone()
 
@@ -187,23 +187,22 @@ class CircuitEnv:
         """
         Returns randomly initialized state of environment.
         State is a torch Tensor of size (5 x number of layers)
-        1st row [0, num of qubits-1] - denotes qubit with control gate in each layer
-        2nd row [0, num of qubits-1] - denotes qubit with not gate in each layer
+        1st row [0, num of qubits-1] - denotes qubit with CONTROL gate in each layer
+        2nd row [0, num of qubits-1] - denotes qubit with NOT gate in each layer
         3rd, 4th & 5th row - rotation qubit, rotation axis, angle
         !!! When some position in 1st or 3rd row has value 'num_qubits',
             then this means empty slot, gate does not exist (we do not
             append it in circuit creator)
         """
         ## state_per_layer: (Control_qubit, NOT_qubit, R_qubit, R_axis, R_angle)
+        ## the initialization means no gates applied [num_qubits, 0, num_qubits, 0, 0]
         controls = self.num_qubits * torch.ones(self.num_layers)
         nots = torch.zeros(self.num_layers)
         rotats = self.num_qubits * torch.ones(self.num_layers)
-        generatos = torch.zeros(self.num_layers)
+        generators = torch.zeros(self.num_layers)
         angles = torch.zeros(self.num_layers)
 
-        state = torch.stack(
-            (controls.float(), nots.float(), rotats.float(), generatos.float(), angles)
-        )
+        state = torch.stack((controls, nots, rotats, generators, angles))
         self.state = state
 
         self.make_circuit(state)
@@ -252,7 +251,9 @@ class CircuitEnv:
 
         for i in range(self.num_layers):
             if state[0][i].item() != self.num_qubits:
-                circuit.add_gate(gate.CNOT(int(state[0][i].item()), int(state[1][i].item())))
+                circuit.add_gate(
+                    gate.CNOT(int(state[0][i].item()), int(state[1][i].item()))
+                )
             elif state[2][i].item() != self.num_qubits:
                 circuit.add_gate(
                     self.R_gate(
@@ -284,17 +285,6 @@ class CircuitEnv:
         v = self.ket.get_vector()
 
         return np.real(np.vdot(v, np.dot(self.hamiltonian, v))) + self.energy_shift
-        # return self.observable.get_expectation_value(self.ket) + self.energy_shift
-
-    def get_ket(self, thetas=None):
-        state = self.state.clone()
-        circ = self.make_circuit(thetas)
-        self.ket.set_zero_state()
-        circ.update_quantum_state(self.ket)
-        v = self.ket.get_vector()
-        v_real = torch.tensor(np.real(v), device=self.device, dtype=torch.float)
-        v_imag = torch.tensor(np.imag(v), device=self.device, dtype=torch.float)
-        return torch.cat((v_real, v_imag)).view(1, -1)
 
     def get_angles(self, update_idx):
         state = self.state.clone()
@@ -332,7 +322,7 @@ class CircuitEnv:
         if not list(which_angles):
             which_angles = np.arange(len(thetas))
 
-        for j in range(self.global_iters):
+        for _ in range(self.global_iters):
             for i in which_angles:
 
                 theta1, theta2, theta3 = thetas.clone(), thetas.clone(), thetas.clone()
