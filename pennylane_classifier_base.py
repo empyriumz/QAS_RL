@@ -44,7 +44,7 @@ class VQCTorch(nn.Module):
         self.num_layers = num_layers
         self.num_qubits = num_qubits
         self.circuit = circuit
-        self.q_params = nn.Parameter(0.1 * torch.randn(self.num_layers, 1))
+        self.q_params = nn.Parameter(torch.randn(self.num_layers, 1))
         #self.q_params = nn.Parameter(0.01 * torch.randn(self.num_layers, self.num_qubits, 4))
      
     def get_angles_atan(self, in_x):

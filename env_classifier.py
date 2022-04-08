@@ -148,8 +148,7 @@ class CircuitEnv:
         qml.AmplitudeEmbedding(
             features=features, wires=range(self.num_qubits), pad_with=0, normalize=True
         )
-        for W in weights:
-            self.layer(thetas=W)
+        self.layer(weights)
         # return qml.expval(qml.PauliZ(0))
         return [qml.expval(qml.PauliZ(wires=i)) for i in range(self.n_classes)]
 
@@ -169,11 +168,11 @@ class CircuitEnv:
                 qml.CNOT(wires=[int(state[0][i]), int(state[1][i])])
             elif state[2][i] != self.num_qubits:
                 if int(state[3][i]) == 1:
-                    qml.RX(thetas[0], wires=int(state[2][i]))
+                    qml.RX(thetas[i][0], wires=int(state[2][i]))
                 elif int(state[3][i]) == 2:
-                    qml.RY(thetas[0], wires=int(state[2][i]))
+                    qml.RY(thetas[i][0], wires=int(state[2][i]))
                 elif int(state[3][i]) == 3:
-                    qml.RZ(thetas[0], wires=int(state[2][i]))
+                    qml.RZ(thetas[i][0], wires=int(state[2][i]))
 
     def get_accuracy(self):
         self.circuit = qml.QNode(self.make_circuit, self.dev, interface="torch")
@@ -197,10 +196,10 @@ class CircuitEnv:
                 scores = self.model(inputs)
                 _, preds = torch.max(scores, 1)
                 loss = loss_fun(scores, labels)
-
                 optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                if self.model.q_params.grad: # in case if the circuit only has CNOT gate, i.e., no trainable parameters
+                    loss.backward()
+                    optimizer.step()
                 accuracy = torch.sum(preds == labels).detach().cpu().numpy()
 
             with torch.no_grad():

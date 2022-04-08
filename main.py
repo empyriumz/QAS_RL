@@ -7,7 +7,6 @@ import pathlib
 import copy
 from utils import get_config
 
-# from environment import CircuitEnv
 from env_classifier import CircuitEnv
 import agents
 
@@ -70,7 +69,7 @@ def agent_test(env, agent, episode_no, seed, output_path, threshold):
             action, eps = agent.act(state)
             assert type(action) == int
             agent.saver.stats_file["test"][episode_no]["actions"].append(action)
-        next_state, reward, done = env.step(agent.translate[action], train_flag=False)
+        next_state, reward, done = env.step(agent.translate[action])
         next_state = modify_state(next_state, env)
         state = next_state.clone()
         agent.saver.stats_file["test"][episode_no]["accuracy"].append(env.accuracy)
