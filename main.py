@@ -116,6 +116,7 @@ def one_episode(episode_no, env, agent, episodes):
         agent.saver.stats_file["train"][episode_no]["actions"].append(action)
 
         next_state, reward, done = env.step(agent.translate[action])
+        #print(next_state)
         assert all(
             next_state == env.state.view(-1).to(device)
         ), "Problem with internal state"
@@ -159,6 +160,7 @@ def one_episode(episode_no, env, agent, episodes):
             agent.saver.validate_stats(episode_no, "train")
             # print(loss)
             # exit()
+    print(next_state)
 
 
 def train(agent, env, episodes, seed, output_path, threshold):

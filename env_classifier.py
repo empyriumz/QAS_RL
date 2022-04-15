@@ -4,16 +4,16 @@ import numpy as np
 import curricula
 import pennylane as qml
 
-from custom_torch_dataset_class import MakeBlobs
+from custom_torch_dataset_class import MakeBlobs, Iris
 from pennylane_classifier_base import VQCTorch
 
 
 class CircuitEnv:
-    def __init__(self, conf, device):
+    def __init__(self, conf, device, RANDOM_SEED=0):
         self.config = conf
         self.num_qubits = self.config["env"]["num_qubits"]
         self.num_layers = self.config["env"]["num_layers"]
-        self.n_classes = self.config["env"]["num_classes"]
+        self.num_classes = self.config["env"]["num_classes"]
         self.n_samples_train = self.config["classifier"]["num_samples_train"]
         self.n_samples_val = self.config["classifier"]["num_samples_val"]
         self.min_accuracy = float(self.config["classifier"]["min_accuracy"])
@@ -44,9 +44,17 @@ class CircuitEnv:
         self.accuracy = 0.0
         ## n * (n -1) for possible CNOT configurations, n * 3 for possible rotations
         self.action_size = self.num_qubits * (self.num_qubits + 2)
+        n_samples_val = 32
+        self.RANDOM_SEED = RANDOM_SEED
+        id_list = list(range(150))
+        rng = np.random.default_rng(self.RANDOM_SEED)
+        val_id = list(rng.choice(id_list, size=n_samples_val, replace=False))
+        train_id = list(set(id_list).difference(val_id))
+        self.dataset_train = Iris(train_id)
+        self.dataset_val = Iris(val_id)
 
-        self.dataset_train = MakeBlobs(n_samples=self.n_samples_train)
-        self.dataset_val = MakeBlobs(n_samples=self.n_samples_val)
+        # self.dataset_train = MakeBlobs(n_samples=self.n_samples_train)
+        # self.dataset_val = MakeBlobs(n_samples=self.n_samples_val)
         self.batch_size = self.config["classifier"]["batch_size"]
         self.data_loader_train = torch.utils.data.DataLoader(
             self.dataset_train, batch_size=self.batch_size, shuffle=True
@@ -56,7 +64,7 @@ class CircuitEnv:
         )
         sample_x, _ = next(iter(self.data_loader_train))
         self.test_sample = sample_x[0]
-        
+
     def step(self, action):
 
         """
@@ -79,7 +87,6 @@ class CircuitEnv:
         ## state[2] corresponds to number of qubit for rotation gate
         next_state[2][self.actual_layer] = action[2]
         next_state[3][self.actual_layer] = action[3]
-        # next_state[4][self.actual_layer] = torch.zeros(1)  # the rotation angle
 
         self.state = next_state.clone()
         self.accuracy = self.get_accuracy()
@@ -87,9 +94,6 @@ class CircuitEnv:
 
         # if self.accuracy < self.curriculum.lowest_accuracy and train_flag:
         #     self.curriculum.lowest_.accuracy = copy.copy(self.accuracy)
-
-        # self.error = float(self.min_accuracy - self.accuracy)
-
         rwd = self.reward_func(self.accuracy)
         self.prev_accuracy = np.copy(self.accuracy)
 
@@ -103,8 +107,8 @@ class CircuitEnv:
         #     self.curriculum_dict[str(self.current_bond_distance)] = copy.deepcopy(
         #         self.curriculum
         #     )
-        print("Accuracy: {:.2f}, Reward: {}".format(self.accuracy, rwd))
-        print(qml.draw(self.circuit)(self.test_sample, self.model.q_params))
+        print("# of layers {}, Accuracy: {:.2f}, Reward: {}".format(self.actual_layer, self.accuracy, rwd))
+        #print(qml.draw(self.circuit)(self.test_sample, self.model.q_params))
         return (
             next_state.view(-1).to(self.device),
             torch.tensor(rwd, dtype=torch.float32, device=self.device),
@@ -150,8 +154,7 @@ class CircuitEnv:
         )
         self.layer(weights)
         # return qml.expval(qml.PauliZ(0))
-        return [qml.expval(qml.PauliZ(wires=i)) for i in range(self.n_classes)]
-
+        return [qml.expval(qml.PauliZ(wires=i)) for i in range(self.num_classes)]
 
     def layer(self, thetas):
         """
@@ -177,7 +180,7 @@ class CircuitEnv:
     def get_accuracy(self):
         self.circuit = qml.QNode(self.make_circuit, self.dev, interface="torch")
         self.model = VQCTorch(
-            self.circuit, num_layers=self.num_layers, num_qubits=self.num_qubits
+            self.circuit, num_classes=self.num_classes, num_layers=self.num_layers, num_qubits=self.num_qubits
         )
         accuracy = self.train()
         return accuracy
@@ -189,19 +192,26 @@ class CircuitEnv:
         loss_fun = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         best_accuracy = 0.0
+        prev_accuracy = 0.0
+        early_stopping = 0
         for _ in range(num_epochs):
             running_acc = 0.0
+            running_loss = 0.0
             for inputs, labels in self.data_loader_train:
                 # inputs = inputs.to(self.device)
                 scores = self.model(inputs)
                 _, preds = torch.max(scores, 1)
                 loss = loss_fun(scores, labels)
-                optimizer.zero_grad()
-                if self.model.q_params.grad: # in case if the circuit only has CNOT gate, i.e., no trainable parameters
+                optimizer.zero_grad() 
+                ## in case if the circuit only has CNOT gates, i.e., no trainable parameters
+                try:
                     loss.backward()
                     optimizer.step()
+                except:
+                    break
                 accuracy = torch.sum(preds == labels).detach().cpu().numpy()
-
+                running_loss += loss.detach().cpu().numpy()
+            #print("running loss {:.4f}".format(running_loss / len(self.dataset_train)))
             with torch.no_grad():
                 for inputs, labels in self.data_loader_val:
                     scores = self.model(inputs)
@@ -214,7 +224,13 @@ class CircuitEnv:
                 best_accuracy = accuracy
             if best_accuracy > self.min_accuracy:
                 return best_accuracy
-
+            if accuracy <= prev_accuracy:
+                early_stopping += 1
+            prev_accuracy = accuracy
+            if early_stopping > 4:
+                #print("Early stopping activated")
+                return best_accuracy
+            
         return best_accuracy
 
     def reward_func(self, accuracy):
@@ -225,6 +241,6 @@ class CircuitEnv:
             reward = -5.0
         else:
             reward = np.clip(
-                (self.prev_accuracy - accuracy) / abs(self.prev_accuracy + 1e-6), -1, 1,
+                (accuracy - self.prev_accuracy) / abs(self.prev_accuracy + 1e-6), -1, 1,
             )
         return reward

@@ -39,14 +39,16 @@ def Qcircuit(params, angles):
 
 
 class VQCTorch(nn.Module):
-    def __init__(self, circuit, num_layers=4, num_qubits=4):
+    def __init__(self, circuit, num_classes=4, num_layers=4, num_qubits=4):
         super().__init__()
         self.num_layers = num_layers
         self.num_qubits = num_qubits
+        self.num_classes = num_classes
         self.circuit = circuit
-        self.q_params = nn.Parameter(torch.randn(self.num_layers, 1))
-        #self.q_params = nn.Parameter(0.01 * torch.randn(self.num_layers, self.num_qubits, 4))
-     
+        #self.q_params = nn.Parameter(0.1 * torch.randn(self.num_layers, 1))
+        self.q_params = nn.Parameter(torch.normal(0, 0.1, size=(self.num_layers, 1)))
+        # self.q_params = nn.Parameter(0.01 * torch.randn(self.num_layers, self.num_qubits, 4))
+
     def get_angles_atan(self, in_x):
         return torch.stack(
             [torch.stack([torch.atan(item), torch.atan(item ** 2)]) for item in in_x]
@@ -71,7 +73,7 @@ class VQCTorch(nn.Module):
             # score_batch.append(normalized_output)
             score_batch.append(res_temp)
 
-        scores = torch.stack(score_batch).view(len(batch_item), n_classes)
+        scores = torch.stack(score_batch).view(len(batch_item), self.num_classes)
 
         return scores
 
