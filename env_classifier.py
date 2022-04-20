@@ -4,8 +4,15 @@ import numpy as np
 import curricula
 import pennylane as qml
 
-from custom_torch_dataset_class import MakeBlobs, Iris
+from custom_torch_dataset_class import MakeBlobs, Iris, Digits
 from pennylane_classifier_base import VQCTorch
+
+"""
+TODO:
+1. We would like to demonstrate that our agent will be generalizable,
+i.e., work for different kinds of dataset & different # of qubits
+2. Moving threshold?
+"""
 
 
 class CircuitEnv:
@@ -39,11 +46,20 @@ class CircuitEnv:
 
         sys.stdout.flush()
         self.state_size = 4 * self.num_layers  # 2 for CNOT, 2 for rotation
-        self.actual_layer = -1
+        self.actual_layer = 0
         self.prev_accuracy = None
         self.accuracy = 0.0
         ## n * (n -1) for possible CNOT configurations, n * 3 for possible rotations
         self.action_size = self.num_qubits * (self.num_qubits + 2)
+        # n_samples_val = 144
+        # self.RANDOM_SEED = RANDOM_SEED
+        # id_list = list(range(720))
+        # rng = np.random.default_rng(self.RANDOM_SEED)
+        # val_id = list(rng.choice(id_list, size=n_samples_val, replace=False))
+        # train_id = list(set(id_list).difference(val_id))
+        # self.dataset_train = Digits(train_id, n_class=self.num_classes)
+        # self.dataset_val = Digits(val_id, n_class=self.num_classes)
+
         n_samples_val = 32
         self.RANDOM_SEED = RANDOM_SEED
         id_list = list(range(150))
@@ -72,7 +88,6 @@ class CircuitEnv:
         Variable 'actual_layer' points last non-empty layer.
         """
         next_state = self.state.clone()
-        self.actual_layer += 1
 
         """
         First two elements of the 'action' vector describes position of the CNOT gate.
@@ -97,18 +112,22 @@ class CircuitEnv:
         rwd = self.reward_func(self.accuracy)
         self.prev_accuracy = np.copy(self.accuracy)
 
+        self.actual_layer += 1
         accuracy_done = int(self.accuracy > self.min_accuracy)
-        layers_done = self.actual_layer == (self.num_layers - 1)
+        layers_done = self.actual_layer == self.num_layers
         done = int(accuracy_done or layers_done)
-
         # if done:
         #     self.curriculum.update_threshold(accuracy_done=accuracy_done)
         #     self.done_threshold = self.curriculum.get_current_threshold()
         #     self.curriculum_dict[str(self.current_bond_distance)] = copy.deepcopy(
         #         self.curriculum
         #     )
-        print("# of layers {}, Accuracy: {:.2f}, Reward: {}".format(self.actual_layer, self.accuracy, rwd))
-        #print(qml.draw(self.circuit)(self.test_sample, self.model.q_params))
+        print(
+            "# of layers {}, Accuracy: {:.2f}, Reward: {}".format(
+                self.actual_layer, self.accuracy, rwd
+            )
+        )
+        # print(qml.draw(self.circuit)(self.test_sample, self.model.q_params))
         return (
             next_state.view(-1).to(self.device),
             torch.tensor(rwd, dtype=torch.float32, device=self.device),
@@ -138,13 +157,15 @@ class CircuitEnv:
         self.state = state
 
         # self.make_circuit(state)
-        self.actual_layer = -1
+        self.actual_layer = 0
 
         # self.curriculum = copy.deepcopy(
         #     self.curriculum_dict[str(self.current_bond_distance)]
         # )
         # self.done_threshold = copy.deepcopy(self.curriculum.get_current_threshold())
-        self.prev_accuracy = 0.0
+        self.prev_accuracy = (
+            1 / self.num_classes
+        )  # using the baseline of random classifier
 
         return state.view(-1).to(self.device)
 
@@ -153,7 +174,6 @@ class CircuitEnv:
             features=features, wires=range(self.num_qubits), pad_with=0, normalize=True
         )
         self.layer(weights)
-        # return qml.expval(qml.PauliZ(0))
         return [qml.expval(qml.PauliZ(wires=i)) for i in range(self.num_classes)]
 
     def layer(self, thetas):
@@ -180,7 +200,10 @@ class CircuitEnv:
     def get_accuracy(self):
         self.circuit = qml.QNode(self.make_circuit, self.dev, interface="torch")
         self.model = VQCTorch(
-            self.circuit, num_classes=self.num_classes, num_layers=self.num_layers, num_qubits=self.num_qubits
+            self.circuit,
+            num_classes=self.num_classes,
+            num_layers=self.num_layers,
+            num_qubits=self.num_qubits,
         )
         accuracy = self.train()
         return accuracy
@@ -202,7 +225,7 @@ class CircuitEnv:
                 scores = self.model(inputs)
                 _, preds = torch.max(scores, 1)
                 loss = loss_fun(scores, labels)
-                optimizer.zero_grad() 
+                optimizer.zero_grad()
                 ## in case if the circuit only has CNOT gates, i.e., no trainable parameters
                 try:
                     loss.backward()
@@ -211,7 +234,7 @@ class CircuitEnv:
                     break
                 accuracy = torch.sum(preds == labels).detach().cpu().numpy()
                 running_loss += loss.detach().cpu().numpy()
-            #print("running loss {:.4f}".format(running_loss / len(self.dataset_train)))
+            # print("running loss {:.4f}".format(running_loss / len(self.dataset_train)))
             with torch.no_grad():
                 for inputs, labels in self.data_loader_val:
                     scores = self.model(inputs)
@@ -228,19 +251,22 @@ class CircuitEnv:
                 early_stopping += 1
             prev_accuracy = accuracy
             if early_stopping > 4:
-                #print("Early stopping activated")
+                # print("Early stopping activated")
                 return best_accuracy
-            
+
         return best_accuracy
 
     def reward_func(self, accuracy):
-        max_depth = self.actual_layer == (self.num_layers - 1)
+        max_depth = self.actual_layer == self.num_layers
         if accuracy >= self.min_accuracy:
-            reward = 5.0
+            reward = 5.0 - 0.01 * self.actual_layer
         elif max_depth:
             reward = -5.0
         else:
             reward = np.clip(
-                (accuracy - self.prev_accuracy) / abs(self.prev_accuracy + 1e-6), -1, 1,
+                (accuracy - self.prev_accuracy) / abs(self.prev_accuracy + 1e-6)
+                - 0.01 * self.actual_layer,
+                -1.5,
+                1.5,
             )
         return reward

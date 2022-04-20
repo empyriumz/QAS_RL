@@ -63,7 +63,7 @@ def agent_test(env, agent, episode_no, seed, output_path, threshold):
     state = modify_state(state, env)
     current_epsilon = copy.copy(agent.epsilon)
     agent.policy_net.eval()
-    for time in range(env.num_layers + 1):
+    for time in range(env.num_layers):
         agent.epsilon = 0
         with torch.no_grad():
             action, eps = agent.act(state)
@@ -110,13 +110,12 @@ def one_episode(episode_no, env, agent, episodes):
     state = modify_state(state, env)
 
     agent.policy_net.train()
-    for itr in range(env.num_layers + 1):
+    for itr in range(env.num_layers):
         action, eps = agent.act(state)
         assert type(action) == int
         agent.saver.stats_file["train"][episode_no]["actions"].append(action)
 
         next_state, reward, done = env.step(agent.translate[action])
-        #print(next_state)
         assert all(
             next_state == env.state.view(-1).to(device)
         ), "Problem with internal state"
@@ -160,7 +159,7 @@ def one_episode(episode_no, env, agent, episodes):
             agent.saver.validate_stats(episode_no, "train")
             # print(loss)
             # exit()
-    print(next_state)
+    # print(next_state)
 
 
 def train(agent, env, episodes, seed, output_path, threshold):

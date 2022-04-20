@@ -45,7 +45,7 @@ class VQCTorch(nn.Module):
         self.num_qubits = num_qubits
         self.num_classes = num_classes
         self.circuit = circuit
-        #self.q_params = nn.Parameter(0.1 * torch.randn(self.num_layers, 1))
+        # self.q_params = nn.Parameter(0.1 * torch.randn(self.num_layers, 1))
         self.q_params = nn.Parameter(torch.normal(0, 0.1, size=(self.num_layers, 1)))
         # self.q_params = nn.Parameter(0.01 * torch.randn(self.num_layers, self.num_qubits, 4))
 
@@ -61,12 +61,8 @@ class VQCTorch(nn.Module):
             # res_temp = self.get_angles_atan(single_item)
             # print(single_item)
             # print(res_temp)
-            # print(qml.draw(Qcircuit, expansion_strategy="device")(self.q_params, res_temp))
             res_temp = self.circuit(single_item, self.q_params)
             # print(res_temp)
-            # q_out_elem = vqc.forward(res_temp)
-            # print(q_out_elem)
-
             # clamp = 1e-9 * torch.ones(2).type(dtype).to(device)
             # clamp = 1e-9 * torch.ones(2)
             # normalized_output = torch.max(q_out_elem, clamp)

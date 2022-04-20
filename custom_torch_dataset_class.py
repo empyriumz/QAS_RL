@@ -1,9 +1,12 @@
 # 2022 03 25 Custom PyTorch Dataset for sklearn dataset
 
-from sklearn.datasets import make_circles
-from sklearn.datasets import make_blobs
-from sklearn.datasets import make_moons
-from sklearn.datasets import load_iris
+from sklearn.datasets import (
+    load_iris,
+    make_blobs,
+    make_circles,
+    make_moons,
+    load_digits,
+)
 
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -38,25 +41,45 @@ class MakeBlobs(Dataset):
 
         return self.X[idx], self.y[idx]
 
+
 class Iris(Dataset):
     def __init__(self, id_list):
         data = load_iris()
         self.X = torch.from_numpy(data.data)
         max, _ = torch.max(self.X, dim=0)
         min, _ = torch.min(self.X, dim=0)
-        #mean = self.X.mean(dim=0)
-        #std = self.X.std(dim=0)
+        # mean = self.X.mean(dim=0)
+        # std = self.X.std(dim=0)
         self.X = (self.X - min) / (max - min)
         self.y = torch.from_numpy(data.target)
         self.id_list = id_list
-        
+
     def __len__(self):
         return len(self.id_list)
 
     def __getitem__(self, idx):
 
         return self.X[self.id_list[idx]], self.y[self.id_list[idx]]
-    
+
+
+class Digits(Dataset):
+    def __init__(self, id_list, n_class=4):
+        data = load_digits(n_class=n_class)
+        self.X = torch.from_numpy(data.data)
+        max, _ = torch.max(self.X, dim=0)
+        min, _ = torch.min(self.X, dim=0)
+        # self.X = (self.X - min) / (max - min)
+        self.y = torch.from_numpy(data.target)
+        self.id_list = id_list
+
+    def __len__(self):
+        return len(self.id_list)
+
+    def __getitem__(self, idx):
+
+        return self.X[self.id_list[idx]], self.y[self.id_list[idx]]
+
+
 if __name__ == "__main__":
     dataset = MakeCircles()
     data_loader = DataLoader(dataset, batch_size=4, shuffle=True)
